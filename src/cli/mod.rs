@@ -27,13 +27,15 @@ mod recurrings;
 mod render;
 mod tags;
 use render::{
-    KeyValueRow, TableRow, header_cell, render_output, shorten_id_for_table, terminal_width,
+    KeyValueRow, TableRow, escape_csv_field, header_cell, render_output, shorten_id_for_table,
+    terminal_width,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize, PartialEq, Eq)]
 pub enum OutputFormat {
     Json,
     Table,
+    Csv,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -1295,7 +1297,9 @@ fn render_transactions_updated(cli: &Cli, items: Vec<Transaction>) -> anyhow::Re
             println!("{s}");
             Ok(())
         }
-        OutputFormat::Table => render_transactions_table(cli, &items, DEFAULT_FIELDS, None),
+        OutputFormat::Table | OutputFormat::Csv => {
+            render_transactions_table(cli, &items, DEFAULT_FIELDS, None)
+        }
     }
 }
 
@@ -1430,6 +1434,81 @@ fn render_transactions_table(
 ) -> anyhow::Result<()> {
     use comfy_table::CellAlignment;
 
+    if cli.output == OutputFormat::Csv {
+        let headers = fields
+            .iter()
+            .map(|f| match f {
+                TransactionField::Date => "date",
+                TransactionField::Name => "name",
+                TransactionField::Amount => "amount",
+                TransactionField::Reviewed => "reviewed",
+                TransactionField::Category => "category",
+                TransactionField::Tags => "tags",
+                TransactionField::Type => "type",
+                TransactionField::Id => "id",
+            })
+            .map(|h| escape_csv_field(h))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("{headers}");
+
+        for t in items {
+            let mut line = Vec::new();
+            for f in fields {
+                match f {
+                    TransactionField::Date => {
+                        line.push(escape_csv_field(t.date.as_deref().unwrap_or("")))
+                    }
+                    TransactionField::Name => {
+                        line.push(escape_csv_field(t.name.as_deref().unwrap_or("")))
+                    }
+                    TransactionField::Amount => {
+                        line.push(escape_csv_field(&value_to_money_string(t.amount.clone())))
+                    }
+                    TransactionField::Reviewed => {
+                        line.push(escape_csv_field(if t.is_reviewed.unwrap_or(false) {
+                            "✓"
+                        } else {
+                            ""
+                        }))
+                    }
+                    TransactionField::Category => {
+                        let name = t
+                            .category_id
+                            .as_ref()
+                            .and_then(|id| categories.and_then(|m| m.get(id)))
+                            .map(|s| s.as_str())
+                            .or_else(|| t.category_id.as_ref().map(|id| id.as_str()))
+                            .unwrap_or("");
+                        line.push(escape_csv_field(name));
+                    }
+                    TransactionField::Tags => {
+                        let tags = t
+                            .tags
+                            .as_ref()
+                            .map(|ts| {
+                                ts.iter()
+                                    .filter_map(|tag| tag.name.as_deref())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            })
+                            .unwrap_or_default();
+                        line.push(escape_csv_field(&tags));
+                    }
+                    TransactionField::Type => line.push(escape_csv_field(
+                        &t.txn_type
+                            .as_ref()
+                            .map(|t| t.to_string())
+                            .unwrap_or_default(),
+                    )),
+                    TransactionField::Id => line.push(escape_csv_field(t.id.as_str())),
+                }
+            }
+            println!("{}", line.join(","));
+        }
+        return Ok(());
+    }
+
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
@@ -1540,14 +1619,14 @@ fn render_transactions_output(
             println!("{s}");
             Ok(())
         }
-        OutputFormat::Table => {
+        OutputFormat::Table | OutputFormat::Csv => {
             let cats = if fields.contains(&TransactionField::Category) {
                 Some(category_name_map(client)?)
             } else {
                 None
             };
             render_transactions_table(cli, &items, fields, cats.as_ref())?;
-            if include_page_info {
+            if include_page_info && cli.output == OutputFormat::Table {
                 render_output(
                     cli,
                     vec![

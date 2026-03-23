@@ -1,0 +1,8 @@
+---
+source: tests/cli_snapshots.rs
+assertion_line: 22
+expression: "run(&[\"--output\", \"csv\", \"categories\", \"list\"])"
+---
+id,name,parent_id,excluded,can_be_deleted
+cat_other,Other,,false,false
+cat_shops,Shops,,false,false
