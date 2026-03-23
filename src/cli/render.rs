@@ -52,6 +52,25 @@ pub(super) fn render_output<T: Serialize + TableRow>(
             println!("{s}");
             Ok(())
         }
+        OutputFormat::Csv => {
+            let headers = T::HEADERS
+                .iter()
+                .map(|h| escape_csv_field(h))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!("{headers}");
+
+            for row in rows {
+                let line = row
+                    .cells()
+                    .iter()
+                    .map(|c| escape_csv_field(&c.content()))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                println!("{line}");
+            }
+            Ok(())
+        }
         OutputFormat::Table => {
             let mut table = Table::new();
             table
@@ -75,6 +94,14 @@ pub(super) fn render_output<T: Serialize + TableRow>(
             println!("{table}");
             Ok(())
         }
+    }
+}
+
+pub(super) fn escape_csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
     }
 }
 
