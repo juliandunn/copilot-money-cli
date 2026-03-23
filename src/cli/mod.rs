@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use chrono::{NaiveDate, TimeZone, Utc};
 use clap::builder::ArgGroup;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
@@ -253,8 +254,16 @@ pub struct TransactionsListArgs {
     pub tag: Vec<String>,
 
     /// Filter to a specific date (supports YYYY-MM-DD and MM-DD-YYYY).
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["date_from", "date_to"])]
     pub date: Option<String>,
+
+    /// Filter to transactions from this date (inclusive, supports YYYY-MM-DD and MM-DD-YYYY).
+    #[arg(long, conflicts_with = "date")]
+    pub date_from: Option<String>,
+
+    /// Filter to transactions until this date (inclusive, supports YYYY-MM-DD and MM-DD-YYYY).
+    #[arg(long, conflicts_with = "date")]
+    pub date_to: Option<String>,
 
     /// Filter by merchant/name substring (case-insensitive).
     #[arg(long)]
@@ -318,8 +327,16 @@ pub struct TransactionsSearchArgs {
     pub tag: Vec<String>,
 
     /// Filter to a specific date (supports YYYY-MM-DD and MM-DD-YYYY).
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["date_from", "date_to"])]
     pub date: Option<String>,
+
+    /// Filter to transactions from this date (inclusive, supports YYYY-MM-DD and MM-DD-YYYY).
+    #[arg(long, conflicts_with = "date")]
+    pub date_from: Option<String>,
+
+    /// Filter to transactions until this date (inclusive, supports YYYY-MM-DD and MM-DD-YYYY).
+    #[arg(long, conflicts_with = "date")]
+    pub date_to: Option<String>,
 
     /// Sort transactions server-side (best-effort).
     #[arg(long, value_enum)]
@@ -677,13 +694,53 @@ fn normalize_date(s: &str) -> Option<String> {
     Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
-fn build_transactions_filter(reviewed: bool, unreviewed: bool) -> Option<serde_json::Value> {
-    if reviewed {
-        Some(serde_json::json!({ "isReviewed": true }))
-    } else if unreviewed {
-        Some(serde_json::json!({ "isReviewed": false }))
+fn date_to_epoch(s: &str, end_of_day: bool) -> Option<i64> {
+    let normalized = normalize_date(s)?;
+    let date = NaiveDate::parse_from_str(&normalized, "%Y-%m-%d").ok()?;
+    let time = if end_of_day {
+        date.and_hms_opt(23, 59, 59)?
     } else {
+        date.and_hms_opt(0, 0, 0)?
+    };
+    Some(Utc.from_utc_datetime(&time).timestamp())
+}
+
+fn build_transactions_filter(
+    reviewed: bool,
+    unreviewed: bool,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
+) -> Option<serde_json::Value> {
+    let mut filter = serde_json::Map::new();
+
+    if reviewed {
+        filter.insert("isReviewed".to_string(), serde_json::json!(true));
+    } else if unreviewed {
+        filter.insert("isReviewed".to_string(), serde_json::json!(false));
+    }
+
+    if date_from.is_some() || date_to.is_some() {
+        let mut range = serde_json::Map::new();
+        if let Some(s) = date_from {
+            if let Some(epoch) = date_to_epoch(s, false) {
+                range.insert("start".to_string(), serde_json::json!(epoch));
+            }
+        }
+        if let Some(s) = date_to {
+            if let Some(epoch) = date_to_epoch(s, true) {
+                range.insert("end".to_string(), serde_json::json!(epoch));
+            }
+        }
+        filter.insert(
+            "dates".to_string(),
+            serde_json::json!([serde_json::Value::Object(range)]),
+        );
+    }
+
+    if filter.is_empty() {
         None
+    } else {
+        Some(serde_json::Value::Object(filter))
     }
 }
 
@@ -777,7 +834,14 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
         TransactionsCmd::List(args) => {
             let category_id =
                 resolve_category_id(client, args.category_id.as_ref(), args.category.as_deref())?;
-            let filter = build_transactions_filter(args.reviewed, args.unreviewed);
+
+            let (df, dt) = if let Some(d) = &args.date {
+                (Some(d.as_str()), Some(d.as_str()))
+            } else {
+                (args.date_from.as_deref(), args.date_to.as_deref())
+            };
+
+            let filter = build_transactions_filter(args.reviewed, args.unreviewed, df, dt);
             let sort = sort_to_graphql(args.sort);
             let (items, page_info) = fetch_transactions_with_filter_sort(
                 client,
@@ -796,6 +860,8 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
                 &args.tag,
                 args.name_contains.as_deref(),
                 args.date.as_deref(),
+                args.date_from.as_deref(),
+                args.date_to.as_deref(),
             );
             render_transactions_output(
                 cli,
@@ -809,7 +875,14 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
         TransactionsCmd::Search(args) => {
             let category_id =
                 resolve_category_id(client, args.category_id.as_ref(), args.category.as_deref())?;
-            let filter = build_transactions_filter(args.reviewed, args.unreviewed);
+
+            let (df, dt) = if let Some(d) = &args.date {
+                (Some(d.as_str()), Some(d.as_str()))
+            } else {
+                (args.date_from.as_deref(), args.date_to.as_deref())
+            };
+
+            let filter = build_transactions_filter(args.reviewed, args.unreviewed, df, dt);
             let sort = sort_to_graphql(args.sort);
             let (items, page_info) = fetch_transactions_with_filter_sort(
                 client,
@@ -828,6 +901,8 @@ fn run_transactions(cli: &Cli, client: &CopilotClient, cmd: TransactionsCmd) -> 
                 &args.tag,
                 Some(&args.query),
                 args.date.as_deref(),
+                args.date_from.as_deref(),
+                args.date_to.as_deref(),
             );
             render_transactions_output(
                 cli,
@@ -1285,9 +1360,14 @@ fn filter_transactions(
     tags: &[String],
     query: Option<&str>,
     date: Option<&str>,
+    date_from: Option<&str>,
+    date_to: Option<&str>,
 ) -> Vec<Transaction> {
     let q = query.map(|s| s.to_lowercase());
     let want_tags = tags.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>();
+    let d_norm = date.and_then(normalize_date);
+    let df_norm = date_from.and_then(normalize_date);
+    let dt_norm = date_to.and_then(normalize_date);
 
     items
         .into_iter()
@@ -1309,9 +1389,18 @@ fn filter_transactions(
                     return false;
                 }
             }
-            if let Some(d) = date {
-                let want = normalize_date(d).unwrap_or_else(|| d.to_string());
-                if t.date.as_deref().unwrap_or("") != want {
+            if let Some(want) = &d_norm {
+                if t.date.as_deref().unwrap_or("") != want.as_str() {
+                    return false;
+                }
+            }
+            if let Some(from) = &df_norm {
+                if t.date.as_deref().unwrap_or("") < from.as_str() {
+                    return false;
+                }
+            }
+            if let Some(to) = &dt_norm {
+                if t.date.as_deref().unwrap_or("") > to.as_str() {
                     return false;
                 }
             }
@@ -1531,13 +1620,21 @@ mod helper_tests {
     #[test]
     fn build_transactions_filter_works() {
         assert_eq!(
-            build_transactions_filter(true, false),
+            build_transactions_filter(true, false, None, None),
             Some(serde_json::json!({"isReviewed": true}))
         );
         assert_eq!(
-            build_transactions_filter(false, true),
+            build_transactions_filter(false, true, None, None),
             Some(serde_json::json!({"isReviewed": false}))
         );
-        assert_eq!(build_transactions_filter(false, false), None);
+        assert_eq!(build_transactions_filter(false, false, None, None), None);
+
+        // Date range
+        assert_eq!(
+            build_transactions_filter(false, false, Some("2025-01-01"), Some("2025-01-31")),
+            Some(serde_json::json!({
+                "dates": [{"start": 1735689600, "end": 1738367999}]
+            }))
+        );
     }
 }

@@ -166,3 +166,45 @@ fn tags_delete_requires_yes_or_dry_run() {
         .stdout(predicate::str::contains("\"deleted\""))
         .stdout(predicate::str::contains("\"true\""));
 }
+
+#[test]
+fn transactions_list_date_range_args_work() {
+    let tmp_home = tempfile::tempdir().unwrap();
+
+    cmd_with_fixtures(&tmp_home)
+        .args([
+            "transactions",
+            "list",
+            "--date-from",
+            "2025-01-01",
+            "--date-to",
+            "2025-01-31",
+        ])
+        .assert()
+        .success();
+
+    cmd_with_fixtures(&tmp_home)
+        .args([
+            "transactions",
+            "list",
+            "--date-from",
+            "01-01-2025",
+            "--date-to",
+            "01-31-2025",
+        ])
+        .assert()
+        .success();
+
+    // Verify conflicts
+    cmd_with_fixtures(&tmp_home)
+        .args([
+            "transactions",
+            "list",
+            "--date",
+            "2025-01-01",
+            "--date-from",
+            "2025-01-01",
+        ])
+        .assert()
+        .failure();
+}

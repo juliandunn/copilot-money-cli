@@ -51,32 +51,60 @@ impl CopilotClient {
         filter: Option<Value>,
         sort: Option<Value>,
     ) -> anyhow::Result<TransactionsPage> {
-        let data = self.graphql(
-            "Transactions",
-            ops::TRANSACTIONS,
-            json!({
-                "first": first,
-                "after": after,
-                "filter": filter,
-                "sort": sort,
-            }),
-        )?;
+        let has_date_filter = filter
+            .as_ref()
+            .and_then(|f| f.get("dates"))
+            .map(|d| d.is_array() && !d.as_array().unwrap().is_empty())
+            .unwrap_or(false);
+
+        let (op_name, op_src, pointer_prefix, variables) = if has_date_filter {
+            (
+                "TransactionsFeed",
+                ops::TRANSACTIONS_FEED,
+                "/data/feed",
+                json!({
+                    "first": first,
+                    "after": after,
+                    "filter": filter,
+                    "sort": sort,
+                    "month": true,
+                }),
+            )
+        } else {
+            (
+                "Transactions",
+                ops::TRANSACTIONS,
+                "/data/transactions",
+                json!({
+                    "first": first,
+                    "after": after,
+                    "filter": filter,
+                    "sort": sort,
+                }),
+            )
+        };
+
+        let data = self.graphql(op_name, op_src, variables)?;
 
         let edges = data
-            .pointer("/data/transactions/edges")
+            .pointer(&format!("{pointer_prefix}/edges"))
             .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("unexpected Transactions response shape"))?;
+            .ok_or_else(|| anyhow::anyhow!("unexpected {op_name} response shape"))?;
 
         let mut transactions = Vec::new();
         for edge in edges {
             if let Some(node) = edge.pointer("/node") {
+                // If it's TransactionsFeed, we might have TransactionMonth nodes which we skip for now
+                if node.get("__typename").and_then(|t| t.as_str()) == Some("TransactionMonth") {
+                    continue;
+                }
                 let t: Transaction = serde_json::from_value(node.clone())?;
                 transactions.push(t);
             }
         }
 
         let page_info = data
-            .pointer("/data/transactions/pageInfo")
+            .pointer(&format!("{pointer_prefix}/pageInfo"))
             .cloned()
             .unwrap_or_else(|| json!({}));
         let page_info: PageInfo = serde_json::from_value(page_info)?;

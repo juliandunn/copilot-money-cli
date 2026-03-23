@@ -3,6 +3,10 @@ pub const TRANSACTIONS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/graphql/Transactions.graphql"
 ));
+pub const TRANSACTIONS_FEED: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/graphql/TransactionsFeed.graphql"
+));
 pub const CATEGORIES: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/graphql/Categories.graphql"
