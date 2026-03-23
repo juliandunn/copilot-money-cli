@@ -13,6 +13,16 @@ fn run(args: &[&str]) -> String {
 }
 
 #[test]
+fn transactions_list_csv_snapshot() {
+    insta::assert_snapshot!(run(&["--output", "csv", "transactions", "list"]));
+}
+
+#[test]
+fn categories_list_csv_snapshot() {
+    insta::assert_snapshot!(run(&["--output", "csv", "categories", "list"]));
+}
+
+#[test]
 fn transactions_list_table_snapshot() {
     insta::assert_snapshot!(run(&["transactions", "list"]));
 }
