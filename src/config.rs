@@ -53,6 +53,19 @@ pub fn ensure_private_dir(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn python_executable() -> String {
+    let venv_python = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".venv")
+        .join("bin")
+        .join("python");
+
+    if venv_python.exists() {
+        venv_python.to_string_lossy().to_string()
+    } else {
+        "python3".to_string()
+    }
+}
+
 pub fn token_helper_path() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
