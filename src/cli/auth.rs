@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 
 use crate::client::CopilotClient;
+use crate::config;
 use crate::config::{
     ensure_private_dir, load_token, save_token, session_path, token_helper_path, token_path,
 };
@@ -46,7 +47,7 @@ pub(super) fn run_auth(cli: &Cli, client: &CopilotClient, cmd: AuthCmd) -> anyho
             let mut token: Option<String> = None;
 
             if let Some(helper) = token_helper_path() {
-                let mut cmd = std::process::Command::new("python3");
+                let mut cmd = std::process::Command::new(config::python_executable());
                 cmd.arg(helper);
                 cmd.args(["--timeout-seconds", &args.timeout_seconds.to_string()]);
 
@@ -142,13 +143,14 @@ pub(super) fn run_auth(cli: &Cli, client: &CopilotClient, cmd: AuthCmd) -> anyho
                 );
             };
 
-            let out = std::process::Command::new("python3")
+            let out = std::process::Command::new(config::python_executable())
                 .arg(helper)
                 .args(["--mode", "session"])
                 .args(["--user-data-dir", dir.to_string_lossy().as_ref()])
                 .args(["--timeout-seconds", &args.timeout_seconds.to_string()])
                 .output()
                 .context("failed to run token helper")?;
+
 
             if !out.status.success() {
                 anyhow::bail!("token helper failed");
