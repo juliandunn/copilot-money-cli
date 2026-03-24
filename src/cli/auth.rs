@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 
-use crate::client::{CopilotClient, refresh_token_via_session};
+use crate::client::CopilotClient;
 use crate::config::{
     ensure_private_dir, load_token, save_token, session_path, token_helper_path, token_path,
 };
@@ -48,7 +48,7 @@ pub(super) fn run_auth(cli: &Cli, client: &CopilotClient, cmd: AuthCmd) -> anyho
             let mut token: Option<String> = None;
 
             if let Some(helper) = token_helper_path() {
-                let mut cmd = std::process::Command::new("python3");
+                let mut cmd = std::process::Command::new(config::python_executable());
                 cmd.arg(helper);
                 cmd.args(["--timeout-seconds", &args.timeout_seconds.to_string()]);
 
@@ -138,8 +138,28 @@ pub(super) fn run_auth(cli: &Cli, client: &CopilotClient, cmd: AuthCmd) -> anyho
             }
             ensure_private_dir(&dir)?;
 
-            let token = refresh_token_via_session(&dir, args.timeout_seconds)
-                .context("failed to refresh token via browser helper")?;
+            let Some(helper) = token_helper_path() else {
+                anyhow::bail!(
+                    "token refresh helper not found (install python3 + playwright, or re-run `copilot auth set-token`)"
+                );
+            };
+
+            let out = std::process::Command::new(config::python_executable())
+                .arg(helper)
+                .args(["--mode", "session"])
+                .args(["--user-data-dir", dir.to_string_lossy().as_ref()])
+                .args(["--timeout-seconds", &args.timeout_seconds.to_string()])
+                .output()
+                .context("failed to run token helper")?;
+
+
+            if !out.status.success() {
+                anyhow::bail!("token helper failed");
+            }
+            let token = String::from_utf8(out.stdout)?.trim().to_string();
+            if token.is_empty() {
+                anyhow::bail!("token helper returned empty token");
+            }
 
             let p = cli.token_file.clone().unwrap_or_else(token_path);
             save_token(&p, &token)?;
