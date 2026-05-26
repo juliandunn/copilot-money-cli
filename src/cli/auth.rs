@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 
 use crate::client::CopilotClient;
+use crate::config;
 use crate::config::{
     ensure_private_dir, load_token, save_token, session_path, token_helper_path, token_path,
 };
